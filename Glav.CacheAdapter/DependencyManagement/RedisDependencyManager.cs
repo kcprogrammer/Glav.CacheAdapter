@@ -37,7 +37,7 @@ namespace Glav.CacheAdapter.DependencyManagement
                     // so we need to convert it
                     var currentKeyValue = _redisDatabase.StringGet(parentKey);
                     Cache.InvalidateCacheItem(parentKey);
-                    cacheValueItems.Add(currentKeyValue);
+                    cacheValueItems.Add(currentKeyValue.HasValue ? currentKeyValue : RedisValue.EmptyString);
                     cacheValueItems.Add(item.Serialize());
                     Logger.WriteInfoMessage(string.Format("Registering parent item:[{0}] - regular cache item converted to parent key list", parentKey));
                 }
@@ -58,6 +58,51 @@ namespace Glav.CacheAdapter.DependencyManagement
             {
                 _redisDatabase.ListRightPush(parentKey, cacheValueItems.ToArray());
             }
+        }
+
+        public bool RegisterParentDefinition(string parentKey, CacheDependencyAction actionToPerform = CacheDependencyAction.ClearDependentItems)
+        {
+            Logger.WriteInfoMessage($"Registering parent item:[{parentKey}]");
+
+            var item = new DependencyItem { CacheKey = parentKey, Action = actionToPerform, IsParentNode = true };
+
+            var cacheValueItems = new List<RedisValue>();
+
+            var parentKeyExists = _redisDatabase.KeyExists(parentKey);
+            if (parentKeyExists)
+            {
+                Logger.WriteInfoMessage($"Registering parent item:[{parentKey}] - key already exists");
+                var currentValueType = _redisDatabase.KeyType(parentKey);
+                if (currentValueType == RedisType.String)
+                {
+                    // it is NOT currently a List, which means it has a simple value and is not associated as a parent key at this time
+                    // so we need to convert it
+                    var currentKeyValue = _redisDatabase.StringGet(parentKey);
+                    Cache.InvalidateCacheItem(parentKey);
+                    cacheValueItems.Add(currentKeyValue.HasValue ? currentKeyValue : RedisValue.EmptyString);
+                    cacheValueItems.Add(item.Serialize());
+                    Logger.WriteInfoMessage($"Registering parent item:[{parentKey}] - regular cache item converted to parent key list");
+                }
+                else
+                {
+                    Logger.WriteInfoMessage($"Registering parent item:[{parentKey}] - skipping registration, already registered");
+                    return false;
+                }
+            }
+            else
+            {
+                // Nothing exists thus far so we create the parent key as a list with the 1st item in the list
+                // as empty as the 1st item in a list for a parent key is always reserved for the cache key value of the parent key
+                // The dependent keys are in the list after that
+                cacheValueItems.Add(string.Empty);
+                Logger.WriteInfoMessage($"Registered parent item:[{parentKey}]");
+            }
+            if (cacheValueItems.Count > 0)
+            {
+                _redisDatabase.ListRightPush(parentKey, cacheValueItems.ToArray());
+            }
+
+            return true;
         }
 
         public override void RemoveParentDependencyDefinition(string parentKey)
